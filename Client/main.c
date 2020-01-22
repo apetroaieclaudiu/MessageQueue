@@ -1,60 +1,87 @@
-#include <mqueue.h>
-#include <stdlib.h>
+/*
+ * client.c: Client program
+ *           to demonstrate interprocess communication
+ *           with POSIX message queues
+ */
+
 #include <stdio.h>
-#include <errno.h>
-#include <unistd.h>
-#include <time.h>
+#include <stdlib.h>
 #include <string.h>
-#include <signal.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <mqueue.h>
 
-#define MSG_SIZE            4096
-#define SERVER_QUEUE_NAME   "Server"
-// This handler will be called when the queue 
-// becomes non-empty.
+#define SERVER_QUEUE_NAME   "/sp-example-server"
+#define QUEUE_PERMISSIONS 0660
+#define MAX_MESSAGES 10
+#define MAX_MSG_SIZE 256
+#define MSG_BUFFER_SIZE MAX_MSG_SIZE + 10
 
-char buf[MSG_SIZE];              // A good-sized buffer
-mqd_t mqrecv, mqsend;    
+int main (int argc, char **argv)
+{
+    char client_queue_name [64];
+    mqd_t qd_server, qd_client;   // queue descriptors
 
-void main () {
-    char*   clientQueue = "Client";
-    int r = rand() % 10;
-    char    str[8];
-    sprintf(str, "%d", r);
-    strcat(clientQueue, str);
-    struct  mq_attr attr, old_attr;   // To store queue attributes
-             // Message queue descriptors
-    unsigned int prio;               // Priority 
-    
-    // First we need to set up the attribute structure
-    attr.mq_maxmsg = 300;
-    attr.mq_msgsize = MSG_SIZE;
+
+    // create the client queue for receiving messages from server
+    sprintf (client_queue_name, "/sp-example-client-%d", getpid ());
+
+    struct mq_attr attr;
+
     attr.mq_flags = 0;
+    attr.mq_maxmsg = MAX_MESSAGES;
+    attr.mq_msgsize = MAX_MSG_SIZE;
+    attr.mq_curmsgs = 0;
 
-    old_attr.mq_maxmsg = 300;
-    old_attr.mq_msgsize = MSG_SIZE;
-    old_attr.mq_flags = 0;
-    // Open a queue with the attribute structure
-    mqsend = mq_open (SERVER_QUEUE_NAME, O_WRONLY, 
-                    0664, &attr);
-    mqrecv = mq_open (clientQueue, O_RDONLY | O_CREAT, 
-                    0664, &old_attr);
-    // Get the attributes for server queue
-    mq_getattr (mqsend, &attr);
-
-    while (1) {
-        char *msg = "Token Request\n";
-        strcat(msg, clientQueue);
-        int sleepTime = rand() % 10;
-        sleep(sleepTime);
-        if (mq_send(mqsend, msg, strlen(msg), 0) == -1)
-            perror ("mq_send()");
-
-        mq_receive(mqrecv, buf, MSG_SIZE, NULL);
-        printf("Received the token with number: %d\n", buf);
+    if ((qd_client = mq_open (client_queue_name, O_RDONLY | O_CREAT, QUEUE_PERMISSIONS, &attr)) == -1) {
+        perror ("Client: mq_open (client)");
+        exit (1);
     }
 
-  // Close all open message queue descriptors    
-    mq_close (mqsend);
-    mq_close (mqrecv);  
+    if ((qd_server = mq_open (SERVER_QUEUE_NAME, O_WRONLY)) == -1) {
+        perror ("Client: mq_open (server)");
+        exit (1);
+    }
 
+    char in_buffer [MSG_BUFFER_SIZE];
+
+    printf ("Ask for a token (Press <ENTER>): ");
+
+    char temp_buf [10];
+
+    while (fgets (temp_buf, 2, stdin)) {
+
+        // send message to server
+        if (mq_send (qd_server, client_queue_name, strlen (client_queue_name) + 1, 0) == -1) {
+            perror ("Client: Not able to send message to server");
+            continue;
+        }
+
+        // receive response from server
+
+        if (mq_receive (qd_client, in_buffer, MSG_BUFFER_SIZE, NULL) == -1) {
+            perror ("Client: mq_receive");
+            exit (1);
+        }
+        // display token received from server
+        printf ("Client: Token received from server: %s\n\n", in_buffer);
+
+        printf ("Ask for a token (Press ): ");
+    }
+
+
+    if (mq_close (qd_client) == -1) {
+        perror ("Client: mq_close");
+        exit (1);
+    }
+
+    if (mq_unlink (client_queue_name) == -1) {
+        perror ("Client: mq_unlink");
+        exit (1);
+    }
+    printf ("Client: bye\n");
+
+    exit (0);
 }

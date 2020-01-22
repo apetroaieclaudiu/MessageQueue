@@ -1,70 +1,69 @@
-#include <mqueue.h>
-#include <stdlib.h>
+/*
+ * server.c: Server program
+ *           to demonstrate interprocess commnuication
+ *           with POSIX message queues
+ */
+
 #include <stdio.h>
-#include <errno.h>
-#include <unistd.h>
-#include <time.h>
+#include <stdlib.h>
 #include <string.h>
-#include <signal.h>
+#include <sys/types.h>
 
-#define MSG_SIZE            4096
-#define SERVER_QUEUE_NAME   "Server"
-// This handler will be called when the queue 
-// becomes non-empty.
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <mqueue.h>
 
-char buf[MSG_SIZE];              // A good-sized buffer
-mqd_t mqrecv, mqsend;    
+#define SERVER_QUEUE_NAME   "/sp-example-server"
+#define QUEUE_PERMISSIONS 0660
+#define MAX_MESSAGES 10
+#define MAX_MSG_SIZE 256
+#define MSG_BUFFER_SIZE MAX_MSG_SIZE + 10
 
-void main () {
+int main (int argc, char **argv)
+{
+    mqd_t qd_server, qd_client;   // queue descriptors
+    long token_number = 1; // next token to be given to client
 
-    struct mq_attr attr, old_attr;   // To store queue attributes
-             // Message queue descriptors
-    unsigned int prio;               // Priority 
+    printf ("Server: Hello, World!\n");
 
-    // First we need to set up the attribute structure
-    attr.mq_maxmsg = 300;
-    attr.mq_msgsize = MSG_SIZE;
+    struct mq_attr attr;
+
     attr.mq_flags = 0;
+    attr.mq_maxmsg = MAX_MESSAGES;
+    attr.mq_msgsize = MAX_MSG_SIZE;
+    attr.mq_curmsgs = 0;
 
-    old_attr.mq_maxmsg = 300;
-    old_attr.mq_msgsize = MSG_SIZE;
-    old_attr.mq_flags = 0;
-    // Open a queue with the attribute structure
-    mqrecv = mq_open (SERVER_QUEUE_NAME, O_RDONLY | O_CREAT, 
-                    0664, &attr);
-    // Get the attributes for server queue
-    mq_getattr (mqrecv, &attr);
+    if ((qd_server = mq_open (SERVER_QUEUE_NAME, O_RDONLY | O_CREAT, QUEUE_PERMISSIONS, &attr)) == -1) {
+        perror ("Server: mq_open (server)");
+        exit (1);
+    }
+    char in_buffer [MSG_BUFFER_SIZE];
+    char out_buffer [MSG_BUFFER_SIZE];
 
     while (1) {
-        char    rcvmsg[MSG_SIZE];
-        int     i = 0, j = 0;
-        char    clientQueue[10];
-        int     startWriting = 0;
-        int r = rand() % 10;
-        char    str[8];
-        sprintf(str, "%d", r);
-        mq_receive(mqrecv, rcvmsg, MSG_SIZE, NULL);
-        while(*(rcvmsg + i)) {
-            if (startWriting) {
-                clientQueue[j] = *(rcvmsg + i);
-                j++;
-            }
-            if (*(rcvmsg + i) == '\n') {
-                startWriting = 1;
-            }
-            i++;
+        // get the oldest message with highest priority
+        if (mq_receive (qd_server, in_buffer, MSG_BUFFER_SIZE, NULL) == -1) {
+            perror ("Server: mq_receive");
+            exit (1);
         }
-        clientQueue[j] = '\0';
-        mqsend = mq_open (clientQueue, O_WRONLY, 0664, &attr);
-    
-        if (mq_send(mqsend, str, strlen(str), 0) == -1)
-            perror ("mq_send()");
-            
-        mq_close(mqsend);
+
+        printf ("Server: message received.\n");
+
+        // send reply message to client
+
+        if ((qd_client = mq_open (in_buffer, O_WRONLY)) == 1) {
+            perror ("Server: Not able to open client queue");
+            continue;
+        }
+
+        sprintf (out_buffer, "%ld", token_number);
+
+        if (mq_send (qd_client, out_buffer, strlen (out_buffer) + 1, 0) == -1) {
+            perror ("Server: Not able to send message to client");
+            continue;
+        }
+
+        printf ("Server: response sent to client.\n");
+        token_number++;
     }
-
-  // Close all open message queue descriptors    
-    mq_close (mqsend);
-    mq_close (mqrecv);  
-
 }
